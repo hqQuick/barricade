@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "barricade"
+version = "0.1.0"
+description = "Barricade Project miniops lineage and runtime"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "mcp>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "mypy",
+  "ruff",
+]
+
+[project.scripts]
+barricade = "barricade.runtime:main"
+barricade-mcp = "barricade.mcp_server:main"
+barricade-dispatch = "barricade.dispatch:main"
+barricade-workflow = "barricade.workflow:main"
+barricade-diagnostics = "barricade.scaling:main"
+
+[tool.setuptools]
+package-dir = {"" = "."}
+
+[tool.setuptools.packages.find]
+include = ["barricade*"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["barricade"]
+show_error_codes = true
+pretty = true
+warn_unused_ignores = true
+warn_redundant_casts = true
