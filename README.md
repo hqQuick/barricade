@@ -4,12 +4,12 @@ Barricade is a governed execution engine for AI-assisted code changes. It classi
 
 ## Claims, Evidence, Gaps
 
-| Claim | Evidence | Gap |
-|---|---|---|
-| It learns from prior work | Warm-state and persistence tests show reused macros, priors, outcome memory, and feedback. | Proven on the repo’s benchmark/task shapes, not on arbitrary open-ended work. |
-| It beats an unguided baseline | The deterministic benchmark comparison in the test suite prefers the guided engine over random-style baseline DNA. | The baseline is deliberately simple; it is not a full comparison against every possible competitor. |
-| It is useful in real edit flows | Dispatch and end-to-end tests prove that verification blocks bad commits and only stages verified changes. | Utility is demonstrated in controlled repo flows, not at production scale. |
-| Readiness gating matters | `act` / `ask` / `stop` behavior is test-covered and changes with task signal strength. | The policy is a practical heuristic, not a formal guarantee of correctness. |
+| Claim                           | Evidence                                                                                                           | Gap                                                                                                 |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| It learns from prior work       | Warm-state and persistence tests show reused macros, priors, outcome memory, and feedback.                         | Proven on the repo’s benchmark/task shapes, not on arbitrary open-ended work.                       |
+| It beats an unguided baseline   | The deterministic benchmark comparison in the test suite prefers the guided engine over random-style baseline DNA. | The baseline is deliberately simple; it is not a full comparison against every possible competitor. |
+| It is useful in real edit flows | Dispatch and end-to-end tests prove that verification blocks bad commits and only stages verified changes.         | Utility is demonstrated in controlled repo flows, not at production scale.                          |
+| Readiness gating matters        | `act` / `ask` / `stop` behavior is test-covered and changes with task signal strength.                             | The policy is a practical heuristic, not a formal guarantee of correctness.                         |
 
 ## How It Runs
 
@@ -50,6 +50,81 @@ uv run python -m barricade.runtime
 uv run python -m barricade.mcp_server
 ```
 
+## MCP Server
+
+### Compile
+
+```bash
+uv run python -m compileall barricade
+```
+
+### Build
+
+Build the installable distribution artifacts from `pyproject.toml`:
+
+```bash
+uv build
+```
+
+### Deploy
+
+For local deployment, install the package and start the MCP server entrypoint:
+
+```bash
+uv sync --all-extras
+uv run barricade-mcp
+```
+
+For OpenCode, point the MCP config at the local server command:
+
+```json
+{
+  "mcp": {
+    "barricade": {
+      "type": "local",
+      "command": [
+        "uv",
+        "run",
+        "--project",
+        "/path/to/barricade",
+        "barricade-mcp"
+      ],
+      "enabled": true,
+      "timeout": 30000
+    }
+  }
+}
+```
+
+### Use It
+
+The main MCP tools are `solve_problem`, `begin_execution`, `manage_execution`, `dispatch_plan`, `run_benchmark_task`, `analyze_scaling_profile`, `describe_tools`, and `inspect_state`.
+
+Typical flow:
+
+1. Call `solve_problem` with a task description.
+2. If the decision policy is `act`, call `begin_execution` with the returned synthesis JSON.
+3. Use `manage_execution` to submit artifacts, verify, read, report, and complete.
+4. If you only want a preview of file changes, call `dispatch_plan` with `commit=false`.
+
+Example LLM prompts:
+
+```text
+Inspect this repo and tell me the safest way to add a small feature, then wait for my approval before editing files.
+```
+
+```text
+Run a Barricade smoke test for a harmless task, show me the execution session, and stop before any file writes.
+```
+
+```text
+Summarize the current repository state, then propose a governed patch plan for one file and verify it before dispatch.
+```
+
+```text
+Use Barricade to benchmark the current setup with a tiny configuration and tell me whether the run looks healthy.
+```
+
 ## Documentation
 
 - [Architecture](docs/architecture.md) - runtime model, module map, and proof matrix
@@ -72,6 +147,7 @@ The test suite is deterministic and the current proof map lives in [docs/tests.m
 ```bash
 uv run pytest tests -q
 ```
+
 # Barricade Notes
 
 Working notes on what Barricade is, what it has shown, and what it might become.
