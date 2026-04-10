@@ -110,19 +110,23 @@ Typical flow:
 Example LLM prompts:
 
 ```text
-Inspect this repo and tell me the safest way to add a small feature, then wait for my approval before editing files.
+Inspect this repo and tell me the safest way to add a small feature, 
+then wait for my approval before editing files.
 ```
 
 ```text
-Run a Barricade smoke test for a harmless task, show me the execution session, and stop before any file writes.
+Run a Barricade smoke test for a harmless task, show me the execution session, 
+and stop before any file writes.
 ```
 
 ```text
-Summarize the current repository state, then propose a governed patch plan for one file and verify it before dispatch.
+Summarize the current repository state, then propose a governed patch plan 
+for one file and verify it before dispatch.
 ```
 
 ```text
-Use Barricade to benchmark the current setup with a tiny configuration and tell me whether the run looks healthy.
+Use Barricade to benchmark the current setup with a tiny configuration 
+and tell me whether the run looks healthy.
 ```
 
 ## Documentation
@@ -162,7 +166,6 @@ The project started as MiniOps Crisis Ecology in early 2026: an evolutionary eng
 - Feed-sensitive residency and prior seeding (v3.11)
 - Feed-derived DNA prior and patch skeletons (v3.14)
 - Devolution, orthogonality, parallax, and rotation operators (theorycraft)
-- Byzantine Fault Tolerance for consensus (BFT protocol)
 - Persistence, dispatch, and a unified MCP workflow (Phases 1-5)
 
 The current system is the product of that evolution. The DNA tokens are not arbitrary labels — they are the surviving opcodes from a multi-generation selection process that found what works.
