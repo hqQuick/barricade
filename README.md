@@ -158,7 +158,7 @@ Working notes on what Barricade is, what it has shown, and what it might become.
 
 ## What This Project Really Is
 
-Barricade looks like a governed execution engine for AI-assisted code changes. That's the interface. Underneath, it's something more interesting: an evolutionary system that discovers cognitive scaffolds — structured sequences of operations that make problem-solving more reliable.
+Barricade looks like a governed execution engine for AI-assisted code changes. That's the product surface. Underneath, it's an evolutionary research layer that explores and stabilizes a small family of structured execution scaffolds — not a proof that every token order matters, but evidence that a few task-shape templates are enough to improve reliability in the current test regime.
 
 The project started as MiniOps Crisis Ecology in early 2026: an evolutionary engine with thermodynamic regime controllers, phase diagrams, exploit basins, and population-level selection. Over successive versions (v3.4 through v3.14), it gained:
 
@@ -168,7 +168,7 @@ The project started as MiniOps Crisis Ecology in early 2026: an evolutionary eng
 - Devolution, orthogonality, parallax, and rotation operators (theorycraft)
 - Persistence, dispatch, and a unified MCP workflow (Phases 1-5)
 
-The current system is the product of that evolution. The DNA tokens are not arbitrary labels — they are the surviving opcodes from a multi-generation selection process that found what works.
+The current system is the product of that evolution. The DNA tokens are not arbitrary labels — they are the surviving opcodes from a multi-generation selection process that yielded the scaffold families used by the current workflow.
 
 ## What We Have Verified
 
@@ -177,17 +177,17 @@ The current system is the product of that evolution. The DNA tokens are not arbi
 - Long-term learning shows increasing support scores and cache reuse across sessions.
 - All current prompt families route to a small set of stable scaffold templates.
 - Learned macros (LM1) emerge from evolution, not hand-coding.
-- Even when we scramble DNA order, the workflow still finishes — which means the scaffold's value is in providing structure, not in the specific token sequence.
+- The scramble test shows that, in the current harness, exact DNA permutation does not change completion on the tested tasks; that is a robustness check for the scaffold, not proof that order never matters.
 
 ## The Scaffold
 
-Across 10 diverse problems (factorial, fibonacci, GCD, prime, binary search, quicksort, merge sort, palindrome, reverse, matrix multiply), the engine converges to the same DNA:
+Across 10 diverse problems (factorial, fibonacci, GCD, prime, binary search, quicksort, merge sort, palindrome, reverse, matrix multiply), the current workflow converges to one of a small set of stable DNA templates:
 
 ```
 OBSERVE → LM1 → WRITE_PATCH → PLAN → REPAIR → COMMIT → WRITE_PLAN → VERIFY → SUMMARIZE
 ```
 
-This is not pattern matching. Pattern matching would produce different scaffolds for fundamentally different problems. Perfect convergence to a single scaffold means the engine found the minimalist structure that enables problem-solving regardless of problem type.
+This is not arbitrary pattern matching. The important result is not that every problem gets the same sequence, but that controlled task families collapse onto a small number of reusable scaffold shapes.
 
 The three observed scaffold shapes are:
 
@@ -197,19 +197,19 @@ The three observed scaffold shapes are:
 | Proof         | OBSERVE → LM1 → WRITE_PATCH → PLAN → REPAIR → RETRIEVE → WRITE_PLAN → VERIFY → SUMMARIZE |
 | Structural    | OBSERVE → LM1 → PLAN → WRITE_PATCH → REPAIR → COMMIT → WRITE_PLAN → VERIFY → SUMMARIZE   |
 
-They share a core: observe first, then act, then verify. The engine discovered this through evolution, not design.
+They share a core: observe first, then act, then verify. Different prompt families can route to different scaffold shapes, so the evidence supports family-level routing, not one universal DNA order. The evolutionary layer helped surface and stabilize these shapes, but the product claim is the structure itself, not any one search path.
 
 ## Why This Matters
 
-The insight from the GPT-6 "secret language" research applies here: human language is a cognitive bottleneck. When models are allowed to develop internal representations, they invent more efficient structures than what we give them in natural language.
+The insight from the GPT-6 "secret language" research applies here in a narrow sense: compact internal representations can outperform verbose natural-language scaffolding. Barricade's DNA tokens serve a similar purpose.
 
-Barricade's DNA tokens serve a similar purpose. They give the model an explicit intermediate representation — a scaffold — that forces deliberation at key points:
+They give the model an explicit intermediate representation — a scaffold — that forces deliberation at key points:
 
 1. **OBSERVE** before you act. Understand the problem first.
 2. **VERIFY** before you commit. Check your work.
 3. **REPAIR** when things go wrong. Don't just fail — recover.
 
-The A/B report shows this works in practice: structured execution avoided structural errors that broke free-form CoT. The proof probe shows it transfers to problems the system has never seen.
+The A/B report shows this works in practice: structured execution avoided structural errors that broke free-form CoT. The proof probe shows it transfers to problems the system has never seen, within the current programming-task regime.
 
 The A/B results are worth repeating:
 
@@ -223,7 +223,7 @@ Problem 14 is the key signal: the scaffold prevented a catastrophic reasoning er
 
 ## The Deeper Question
 
-The evolution underneath produces more than just a good token sequence. It implements:
+The evolutionary layer does more than search for a single token sequence. It explores several selection pressures that can help discover and preserve scaffold families:
 
 - **Parallax**: Splitting the population into best and worst to get two views of the landscape, giving depth perception rather than a single fitness score.
 - **Orthogonality**: Multi-axis fitness evaluation so the system doesn't collapse everything into a single number.
@@ -231,7 +231,7 @@ The evolution underneath produces more than just a good token sequence. It imple
 - **Devolution**: Using the worst individuals not as waste but as probes that find cliff edges in the fitness landscape.
 - **Scout protocol**: Sending the worst individuals to completely different regions of DNA space through radical mutation, discovering peaks the main population can't reach through incremental steps.
 
-These are not just optimization tricks. They are mechanisms for discovering structure that nobody designed. The evolutionary engine doesn't find the best answer — it finds the best questions.
+These are not just optimization tricks. They are ways to search for and retain structure under different task-shape pressures. The important point is not that every mechanism is essential in every run, but that the evolutionary layer can separate and stabilize scaffold families that a static prompt would not discover on its own.
 
 ## What This Does Not Prove
 
@@ -239,14 +239,15 @@ These are not just optimization tricks. They are mechanisms for discovering stru
 - It does not prove Barricade can generalize to everything.
 - It does not prove that changing the order of the DNA by itself changes whether the workflow finishes.
 - It does not prove that the scaffold creates genuinely new capabilities that the underlying model couldn't produce on its own — only that the scaffold makes them more reliable.
+- It does not prove that the evolutionary layer is necessary for every deployment; a static scaffold may be enough in some settings.
 
-The honest gap: we know the scaffold makes CoT more reliable, but we don't yet know whether it enables capabilities that would be impossible without it.
+The honest gap: we know the scaffold makes CoT more reliable, but we do not yet know the minimal subset of evolutionary machinery required to keep that reliability across task families.
 
 ## Best Current Read
 
-Barricade is a system where evolutionary search discovered that the same minimal cognitive scaffold works across all tested programming tasks. The scaffold doesn't encode specific knowledge — it encodes the minimal structure needed for reliable problem-solving: observe, then act, then verify.
+Barricade is a system where evolutionary search helped identify and stabilize a small family of scaffold templates that work across tested programming tasks. The scaffold doesn't encode specific knowledge — it encodes the minimal structure needed for reliable problem-solving: observe, then act, then verify.
 
-The interesting question is not whether this works (the tests show it does), but what it means. The engine found, through evolution, that the shortest path to reliable problem-solving is not more tokens or more complexity — it's a small, stable structure that forces the right kind of thinking at the right moments.
+The interesting question is not whether this works (the tests show it does), but how much of the surrounding evolutionary machinery is essential versus optional. The strongest current claim is about the scaffold and the routing, not about a unique DNA order.
 
 ## Research Note
 
