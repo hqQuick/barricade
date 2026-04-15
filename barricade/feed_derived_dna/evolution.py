@@ -462,17 +462,43 @@ def _assign_unified_selection_scores(population: list[Individual]) -> None:
             + 0.07 * max(0.0, min(1.0, max(0.0, individual.artifact_yield) / 6.0))
             + 0.07 * max(0.0, min(1.0, (individual.market_score + 12.0) / 24.0))
         )
+        verification_term = 0.55 * max(
+            0.0, min(1.0, individual.task_threshold_pass)
+        ) + 0.45 * max(0.0, min(1.0, individual.solve_rate_test))
+        if individual.task_threshold_pass > 0.0:
+            verification_term = min(1.0, verification_term + 0.08)
+        if individual.market_score > 0.0:
+            verification_term = min(1.0, verification_term + 0.03)
+        if individual.specialization in {"summary", "summary_bridge", "patch"}:
+            verification_term = min(1.0, verification_term + 0.02)
+        reanchor_bonus = 0.0
+        if (
+            individual.specialization == "generalist"
+            and individual.task_threshold_pass < 0.2
+        ):
+            reanchor_bonus -= 0.04
+        if (
+            individual.task_threshold_pass >= 0.68
+            and individual.stability_score >= 0.58
+        ):
+            reanchor_bonus += 0.03
+        if individual.market_score > 4.0 and individual.artifact_yield > 0.0:
+            reanchor_bonus += 0.01
+        if individual.task_threshold_pass < 0.12:
+            verification_term *= 0.85
         rarity_term = 1.0 - (
             specialization_counts.get(individual.specialization, 0)
             / max_specialization_count
         )
         selection_score = (
-            0.32 * behavior_term
-            + 0.20 * vector_term
-            + 0.18 * rotation_term
+            0.28 * behavior_term
+            + 0.18 * vector_term
+            + 0.16 * rotation_term
             + 0.14 * pareto_term
             + 0.10 * crowding_term
             + 0.10 * rarity_term
+            + 0.10 * verification_term
+            + reanchor_bonus
         )
         individual.selection_score = round(max(0.0, min(1.0, selection_score)), 3)
 
@@ -605,14 +631,18 @@ def _selection_profiles(
 
     top_axis = {}
     for idx, axis in enumerate(axes):
+
         def _top_key(ind: Individual, i: int = idx) -> float:
             return _fitness_at(ind, i)
+
         top_axis[axis] = max(population, key=_top_key)
 
     bottom_axis = {}
     for idx, axis in enumerate(axes):
+
         def _bottom_key(ind: Individual, i: int = idx) -> float:
             return _fitness_at(ind, i)
+
         bottom_axis[axis] = min(population, key=_bottom_key)
 
     if config.enable_rotation and any(
@@ -754,6 +784,35 @@ def _selection_profiles(
         "rotation_strength": round(
             rotation_strength if config.enable_rotation else 0.0, 3
         ),
+        "verification_focus": {
+            "constraint_pressure": round(
+                sum(
+                    1
+                    for task in tasks
+                    if any(
+                        token in {"VERIFY_CONSTRAINTS", "REANCHOR"}
+                        for token in task.get("req", [])
+                    )
+                ),
+                3,
+            ),
+            "mode_counts": dict(
+                Counter(
+                    token
+                    for task in tasks
+                    for token in task.get("req", [])
+                    if token
+                    in {
+                        "VERIFY",
+                        "VERIFY_CODE",
+                        "VERIFY_DATA",
+                        "VERIFY_CONSTRAINTS",
+                        "VERIFY_ENV",
+                        "REANCHOR",
+                    }
+                )
+            ),
+        },
         "selection_mode": "unified"
         if config.enable_unified
         else (
@@ -974,7 +1033,14 @@ def ecology_round(pop, macro_lib, episodes, rng_seed, task_pool=None):
             1e-6, abs(ind.train_score)
         )
         ind.artifact_reuse_score = statistics.mean(art_reuse_scores)
-        ind.artifact_yield = statistics.mean(art_yields)
+        ind.artifact_yield = max(
+            -0.15,
+            statistics.mean(art_yields)
+            + 0.17 * ind.task_threshold_pass
+            + 0.09 * ind.solve_rate_test
+            + (0.08 if ind.specialization != "generalist" else 0.0)
+            + (0.03 if ind.task_threshold_pass >= 0.7 else 0.0),
+        )
         ind.profit = profits[idx]
         ind.wallet_end = wallets[idx]
         ind.gen_efficiency = ind.test_score / max(1.0, ind.flattened_len)
@@ -991,6 +1057,8 @@ def ecology_round(pop, macro_lib, episodes, rng_seed, task_pool=None):
         gated_market = (
             profits[idx] + 4.0 * sum(inventories[idx].values()) + 3.0 * reputation[idx]
         ) * (0.25 + 0.75 * ind.task_threshold_pass)
+        gated_market += 1.18 * ind.solve_rate_test + 0.66 * ind.task_threshold_pass
+        gated_market += 0.9 * ind.artifact_yield if ind.artifact_yield > 0 else 0.0
         ind.market_score = gated_market
 
         specialization_bonus = 0.0
@@ -1065,7 +1133,18 @@ def compute_governed_fitness(pop):
             - mono_penalty
             + 0.03 * geometry.get("balance", 0.0),
         )
-        x.governed_fitness = x.fitness * (0.60 + 0.62 * x.stability_score)
+        structure_bonus = 0.02 * (
+            max(0.0, geometry.get("plan_axis", 0.0))
+            + max(0.0, geometry.get("summary_axis", 0.0))
+            + max(0.0, geometry.get("verify_axis", 0.0))
+        )
+        x.governed_fitness = (
+            x.fitness * (0.60 + 0.62 * x.stability_score)
+            + structure_bonus
+            + 0.04 * max(0.0, geometry.get("plan_axis", 0.0))
+            + 0.04 * max(0.0, geometry.get("summary_axis", 0.0))
+            + 0.04 * max(0.0, geometry.get("verify_axis", 0.0))
+        )
 
 
 def summarize(pop):

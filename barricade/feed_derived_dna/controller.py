@@ -185,6 +185,14 @@ def exploit_score(metrics, state):
     selection_term = max(
         0.0, min(1.0, float(metrics.get("selection_score_mean", 0.0) or 0.0))
     )
+    selection_term = max(
+        selection_term,
+        min(
+            1.0,
+            0.55 * float(metrics.get("task_threshold_pass_mean", 0.0) or 0.0)
+            + 0.45 * float(metrics.get("solve_rate_test_mean", 0.0) or 0.0),
+        ),
+    )
     variance_ratio = _governance_variance_ratio(metrics)
     stability_term = (
         0.6 * metrics["stability_score_mean"] + 0.4 * metrics["economic_stability_mean"]
@@ -225,6 +233,18 @@ def exploit_entry_barrier(metrics, state):
     barrier -= min(
         0.03,
         max(0.0, float(metrics.get("selection_score_mean", 0.0) or 0.0) - 0.58) * 0.08,
+    )
+    barrier -= min(
+        0.04,
+        max(
+            0.0,
+            (
+                0.55 * float(metrics.get("task_threshold_pass_mean", 0.0) or 0.0)
+                + 0.45 * float(metrics.get("solve_rate_test_mean", 0.0) or 0.0)
+            )
+            - 0.58,
+        )
+        * 0.08,
     )
     barrier -= min(0.04, max(0.0, metrics.get("optimizer_plan_axis_mean", 0.0)) * 0.05)
     barrier += min(
@@ -511,7 +531,7 @@ def motif_reinforcement_candidates(motif_market, specialization):
             + meta["mean_profit"] * 0.20
             + spec_hits * 1.5
         )
-        if meta["count"] >= 3 and meta["mean_stability"] >= 0.68:
+        if meta["count"] >= 3 and meta["mean_stability"] >= 0.72:
             viable.append((score, motif))
     viable.sort(reverse=True)
     return viable[:10]

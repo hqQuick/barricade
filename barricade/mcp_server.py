@@ -21,9 +21,7 @@ from .workflow import run_unified_workflow
 from ._shared import (
     as_mapping,
     as_string_list,
-    as_macro_library,
     dna_summary as _format_dna_summary,
-    is_unresolved_macro_token,
 )
 from ._validation import (
     validate_solve_problem,
@@ -262,16 +260,8 @@ def _build_execution_seed(result: dict[str, Any]) -> dict[str, Any]:
     raw_dna = as_string_list(dna_container.get("feed_prior_dna"))
     if not raw_dna:
         raw_dna = as_string_list(synthesis.get("feed_prior_dna"))
-
-    learned_macros = as_macro_library(synthesis.get("learned_macros"))
-
-    execution_dna: list[str] = []
-    omitted_macros: list[str] = []
-    for token in raw_dna:
-        if is_unresolved_macro_token(token, learned_macros):
-            omitted_macros.append(token)
-            continue
-        execution_dna.append(token)
+    execution_dna = list(raw_dna)
+    omitted_macros = as_string_list(synthesis.get("omitted_macros"))
 
     execution_seed: dict[str, Any] = {
         "dna": execution_dna,

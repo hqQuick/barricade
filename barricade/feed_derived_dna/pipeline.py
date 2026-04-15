@@ -159,15 +159,33 @@ def _landscape_population_from_result(
 
 def _selection_score_value(individual: Any) -> float:
     if isinstance(individual, dict):
-        value = individual.get(
-            "selection_score", individual.get("governed_fitness", 0.0)
+        selection_score = individual.get("selection_score")
+        governed_fitness = individual.get("governed_fitness", 0.0)
+        has_selection_context = bool(
+            individual.get("selection_axes") or individual.get("fitness_vector")
         )
     else:
-        value = getattr(
-            individual, "selection_score", getattr(individual, "governed_fitness", 0.0)
+        selection_score = getattr(individual, "selection_score", None)
+        governed_fitness = getattr(individual, "governed_fitness", 0.0)
+        has_selection_context = bool(
+            getattr(individual, "selection_axes", None)
+            or getattr(individual, "fitness_vector", None)
         )
+
     try:
-        return float(value or 0.0)
+        selection_value = (
+            float(selection_score) if selection_score is not None else None
+        )
+    except (TypeError, ValueError):
+        selection_value = None
+
+    if selection_value is not None and (
+        selection_value != 0.0 or has_selection_context
+    ):
+        return selection_value
+
+    try:
+        return float(governed_fitness or 0.0)
     except (TypeError, ValueError):
         return 0.0
 
@@ -642,7 +660,7 @@ def run_v311(
                             elite.stability_score - slot["mean_stability"]
                         ) / slot["count"]
                         slot["best_governed_fitness"] = max(
-                            slot["best_governed_fitness"], _selection_score_value(elite)
+                            slot["best_governed_fitness"], elite.governed_fitness
                         )
                         slot["specializations"][elite.specialization] = (
                             slot["specializations"].get(elite.specialization, 0) + 1
@@ -724,6 +742,8 @@ def run_v311(
                         and scout.selection_score >= pop_metrics["selection_score_mean"]
                         and scout.task_threshold_pass
                         >= max(0.68, pop_metrics["task_threshold_pass_mean"])
+                        and scout.solve_rate_test
+                        >= max(0.68, pop_metrics["solve_rate_test_mean"])
                         and scout.stability_score
                         >= max(0.58, pop_metrics["stability_score_mean"])
                     ]
@@ -850,7 +870,9 @@ def run_v311(
                             k: boost_for_missing_niche(k, spec_counts, targets)
                             for k in ("summary", "patch", "plan", "generalist")
                         }
-                        force_role = max(scored_targets, key=lambda k: scored_targets.get(k, 0.0))
+                        force_role = max(
+                            scored_targets, key=lambda k: scored_targets.get(k, 0.0)
+                        )
                         if (
                             force_role != "generalist"
                             and scored_targets[force_role] > 1.10

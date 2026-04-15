@@ -52,6 +52,36 @@ STEP_GUIDANCE = {
         "title": "VERIFY",
         "instruction": "Run the verification command that proves the current change is safe.",
     },
+    "VERIFY_CODE": {
+        "tool_hint": "verify_step",
+        "kind": "verification",
+        "title": "VERIFY_CODE",
+        "instruction": "Verify code-level correctness, syntax, and execution behavior.",
+    },
+    "VERIFY_DATA": {
+        "tool_hint": "verify_step",
+        "kind": "verification",
+        "title": "VERIFY_DATA",
+        "instruction": "Verify data shape, schema, and content consistency.",
+    },
+    "VERIFY_CONSTRAINTS": {
+        "tool_hint": "verify_step",
+        "kind": "verification",
+        "title": "VERIFY_CONSTRAINTS",
+        "instruction": "Verify IR constraints and invariants against the task outcome.",
+    },
+    "VERIFY_ENV": {
+        "tool_hint": "verify_step",
+        "kind": "verification",
+        "title": "VERIFY_ENV",
+        "instruction": "Verify environment assumptions, dependencies, and runtime context.",
+    },
+    "REANCHOR": {
+        "tool_hint": "submit_step",
+        "kind": "reanchor",
+        "title": "REANCHOR",
+        "instruction": "Reset the trajectory to verified truth using IR and trusted artifacts.",
+    },
     "SUMMARIZE": {
         "tool_hint": "submit_step",
         "kind": "summary",
@@ -92,6 +122,11 @@ ARTIFACT_PREFIXES = {
     "WRITE_PLAN": "PLAN",
     "WRITE_PATCH": "PATC",
     "VERIFY": "VERI",
+    "VERIFY_CODE": "VCOD",
+    "VERIFY_DATA": "VDAT",
+    "VERIFY_CONSTRAINTS": "VCON",
+    "VERIFY_ENV": "VENV",
+    "REANCHOR": "REAN",
     "SUMMARIZE": "SUMM",
     "ROLLBACK": "ROLL",
     "READ_ARTIFACT": "READ",
@@ -113,6 +148,12 @@ def _step_trace(
         if verification and verification.get("passed"):
             return ["VERIFY", "SUMMARIZE"]
         return ["VERIFY", "REPAIR"]
+    if token in {"VERIFY_CODE", "VERIFY_DATA", "VERIFY_CONSTRAINTS", "VERIFY_ENV"}:
+        if verification and verification.get("passed"):
+            return [token, "SUMMARIZE"]
+        return [token, "REPAIR"]
+    if token == "REANCHOR":
+        return ["REANCHOR", "VERIFY_CONSTRAINTS", "VERIFY"]
     if token == "OBSERVE":
         return ["OBSERVE", "RETRIEVE", "VERIFY"]
     if token == "PLAN":

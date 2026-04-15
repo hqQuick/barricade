@@ -81,18 +81,23 @@ The market is not decorative. It is how Barricade keeps step evidence, verificat
 
 ## Module Map
 
-| Component                                                           | Responsibility                                                                               |
-| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| [barricade/workflow_intake.py](../barricade/workflow_intake.py)     | Parse task text into goal, constraints, deliverables, risks, domain tags, and shape profile. |
-| [barricade/problem_ir.py](../barricade/problem_ir.py)               | Build structured problem intermediate representations from raw task text.                    |
-| [barricade/workflow.py](../barricade/workflow.py)                   | Build the readiness policy and synthesis result returned by `solve_problem`.                 |
-| [barricade/feed_derived_dna/](../barricade/feed_derived_dna/)       | Generate benchmark-backed DNA, mine reusable patterns, and persist learned state.            |
-| [barricade/executor/registry.py](../barricade/executor/registry.py) | Run execution sessions, score artifacts, and advance the DNA cursor.                         |
-| [barricade/dispatch.py](../barricade/dispatch.py)                   | Stage file updates, run verification in a clean copy, and commit only if checks pass.        |
-| [barricade/\_shared.py](../barricade/_shared.py)                    | Share helpers, normalization, and timeout-safe subprocess execution.                         |
-| [barricade/scaling.py](../barricade/scaling.py)                     | Compare benchmark runs and diagnose whether a candidate improved.                            |
-| [barricade/mcp_server.py](../barricade/mcp_server.py)               | Expose the eight public tools over MCP.                                                      |
-| [barricade/runtime.py](../barricade/runtime.py)                     | Run deterministic benchmark comparisons, compact summaries, and ablation studies.            |
+| Component                                                                  | Responsibility                                                                               |
+| -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| [barricade/workflow_intake.py](../barricade/workflow_intake.py)            | Parse task text into goal, constraints, deliverables, risks, domain tags, and shape profile. |
+| [barricade/problem_ir.py](../barricade/problem_ir.py)                      | Build structured problem intermediate representations from raw task text.                    |
+| [barricade/workflow.py](../barricade/workflow.py)                          | Build the readiness policy and synthesis result returned by `solve_problem`.                 |
+| [barricade/feed_derived_dna/](../barricade/feed_derived_dna/)              | Generate benchmark-backed DNA, mine reusable patterns, and persist learned state.            |
+| [barricade/\_validation.py](../barricade/_validation.py)                   | Validate task and workspace inputs.                                                          |
+| [barricade/\_verification_parser.py](../barricade/_verification_parser.py) | Parse structured verification output and failure summaries.                                  |
+| [barricade/\_state_inspector.py](../barricade/_state_inspector.py)         | Summarize learned state, macros, motifs, and recent runs.                                    |
+| [barricade/\_benchmarking.py](../barricade/_benchmarking.py)               | Compact benchmark payloads and comparison reports.                                           |
+| [barricade/\_version.py](../barricade/_version.py)                         | Attach API versioning to public payloads.                                                    |
+| [barricade/executor/registry.py](../barricade/executor/registry.py)        | Run execution sessions, score artifacts, and advance the DNA cursor.                         |
+| [barricade/dispatch.py](../barricade/dispatch.py)                          | Stage file updates, run verification in a clean copy, and commit only if checks pass.        |
+| [barricade/\_shared.py](../barricade/_shared.py)                           | Share helpers, normalization, and timeout-safe subprocess execution.                         |
+| [barricade/scaling.py](../barricade/scaling.py)                            | Compare benchmark runs and diagnose whether a candidate improved.                            |
+| [barricade/mcp_server.py](../barricade/mcp_server.py)                      | Expose the eight public tools over MCP.                                                      |
+| [barricade/runtime.py](../barricade/runtime.py)                            | Run deterministic benchmark comparisons, compact summaries, and ablation studies.            |
 
 ## Benchmark Surface
 
@@ -158,6 +163,7 @@ sequenceDiagram
 ├── outcome_ledger.jsonl
 ├── runs.jsonl
 ├── lineages.jsonl
+├── benchmark_runs.jsonl
 ├── benchmark_runs/
 └── task_shape_priors.jsonl
 ```

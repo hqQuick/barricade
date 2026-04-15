@@ -15,6 +15,7 @@ from .constants import (
     ARTIFACT_TYPES,
     BASE_MACROS,
     ALL_TOKENS,
+    CONTROL_TOKENS,
     PRIMITIVES,
     SEMANTIC_FAMILIES,
 )
@@ -469,7 +470,11 @@ def _semantic_priority_tokens(
     if kind == "planning" or "implementation" in domain_tags:
         tokens.extend(["WRITE_PLAN", "PLAN", "VERIFY", "READ_ARTIFACT"])
 
-    tokens.extend(str(token).upper() for token in req if token in ALL_TOKENS)
+    tokens.extend(
+        str(token).upper()
+        for token in req
+        if token in ALL_TOKENS or token in CONTROL_TOKENS
+    )
     return _dedupe_preserve_order(tokens)
 
 
@@ -893,9 +898,9 @@ def semantic_priority_tokens_from_task_pool(
             token_weights[str(token)] += float(profile["rule_weight"])
     return [
         token
-        for token, _ in sorted(
-            token_weights.items(), key=lambda x: x[1], reverse=True
-        )[:limit]
+        for token, _ in sorted(token_weights.items(), key=lambda x: x[1], reverse=True)[
+            :limit
+        ]
     ]
 
 
@@ -998,11 +1003,15 @@ def build_semantic_promotion_bank(
             template_set = {tuple(template) for template in aggregate_templates}
             for name, expansion in learned_macros.items():
                 expansion_tuple = tuple(expansion)
+                if len(expansion_tuple) < 3 or len(expansion_tuple) > 6:
+                    continue
+                if all(token.startswith("LM") for token in expansion_tuple):
+                    continue
                 if expansion_tuple in template_set:
                     promoted_macros.append(name)
                     continue
                 if len(priority_set & set(expansion_tuple)) >= max(
-                    2, len(expansion_tuple) // 2
+                    4, len(expansion_tuple)
                 ):
                     promoted_macros.append(name)
 
@@ -1031,6 +1040,12 @@ def build_semantic_promotion_bank(
                 "task_examples": _dedupe_preserve_order(task_examples)[:3],
                 "trace_examples": trace_examples,
                 "promoted_macros": _dedupe_preserve_order(promoted_macros)[:6],
+                "macro_budget": {
+                    "max_promotions": 6,
+                    "min_alignment": 0.68,
+                    "min_length": 3,
+                    "max_length": 6,
+                },
                 "rule_weight": round(
                     sum(
                         float(profile.get("rule_weight", 1.0) or 1.0)
@@ -1861,7 +1876,9 @@ def population_landscape_profile(population: Sequence[Any]) -> dict[str, Any]:
         "orthogonality": {
             "condition_number": round(condition_number, 3),
             "principal_axis": dominant_axis,
-            "principal_loading_count": len(cast(list[Any], rotation_basis["principal_axis"])),
+            "principal_loading_count": len(
+                cast(list[Any], rotation_basis["principal_axis"])
+            ),
         },
     }
 

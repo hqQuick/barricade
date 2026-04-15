@@ -147,10 +147,12 @@ def derive_act_ask_stop_policy(
         - 0.05 * best_failure_signal,
         3,
     )
+    if route_hint == "patching" and confidence >= 0.65 and risk_count <= 2:
+        support_score = round(min(1.0, support_score + 0.04), 3)
 
     if (
         confidence >= 0.52
-        and support_score >= 0.50
+        and support_score >= 0.45
         and route_hint != "mixed"
         and risk_count <= 2
     ):
@@ -270,6 +272,9 @@ def _summarize_execution_feedback(entry: dict[str, Any]) -> dict[str, Any]:
         "support_score": round(
             float(decision_policy.get("support_score", 0.0) or 0.0),
             3,
+        ),
+        "compact_macros": int(
+            min(8, int(completion_summary.get("learned_macro_count", 0) or 0))
         ),
     }
 

@@ -100,6 +100,7 @@ def _success_trace_bank_from_record(
         ),
     )
 
+
 def _shape_profile_from_benchmark_result(
     benchmark_result: dict[str, Any],
 ) -> dict[str, Any]:
@@ -413,9 +414,24 @@ def load_outcome_memory(
                     3,
                 )
 
+    def _is_novel_trace(trace_item: Mapping[str, Any]) -> bool:
+        trace = trace_item.get("trace", [])
+        if not isinstance(trace, list) or not trace:
+            return False
+        key = tuple(str(token) for token in trace if str(token))
+        if not key:
+            return False
+        return key not in success_trace_bank
+
     _merge_trace_bank(nearest_success)
     if exact_match and exact_match.get("success"):
         _merge_trace_bank([exact_match])
+
+    success_trace_bank = {
+        key: value
+        for key, value in success_trace_bank.items()
+        if _is_novel_trace(value) or float(value.get("weight", 0.0) or 0.0) >= 1.25
+    }
 
     return {
         "available": True,

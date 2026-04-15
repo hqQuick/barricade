@@ -7,7 +7,12 @@ from typing import Any
 
 from ._version import API_VERSION, with_api_version
 
-__all__ = ["API_VERSION", "benchmark_comparison_report", "analyze_scaling_profile", "main"]
+__all__ = [
+    "API_VERSION",
+    "benchmark_comparison_report",
+    "analyze_scaling_profile",
+    "main",
+]
 
 
 def _load_payload(
@@ -454,14 +459,21 @@ def _baseline_comparison(
 
 def _comparison_score(snapshot: dict[str, float]) -> float:
     return round(
-        0.30 * snapshot["governed_mean"]
-        + 0.18 * snapshot["selection_score_mean"]
-        + 48.0 * snapshot["solve_rate_test_mean"]
-        + 32.0 * snapshot["stability_score_mean"]
+        0.36 * snapshot["governed_mean"]
+        + 0.10 * snapshot["selection_score_mean"]
+        + 38.0 * snapshot["solve_rate_test_mean"]
+        + 28.0 * snapshot["stability_score_mean"]
         + 24.0 * snapshot["task_threshold_pass_mean"]
-        + 10.0 * snapshot["economic_stability_mean"]
-        + 8.0 * snapshot["market_score_mean"]
+        + 12.0 * snapshot["economic_stability_mean"]
+        + 10.0 * snapshot["market_score_mean"]
+        + 22.0 * snapshot.get("artifact_yield_mean", 0.0)
+        + 8.0 * snapshot.get("optimizer_plan_axis_mean", 0.0)
+        + 8.0 * snapshot.get("optimizer_verify_axis_mean", 0.0)
         + 6.0 * snapshot["rotation_market_signal"]
+        + 12.0 * snapshot.get("specialization_entropy", 0.0)
+        + 10.0 * snapshot.get("motif_entropy", 0.0)
+        + 6.0 * snapshot.get("lineage_entropy", 0.0)
+        - 12.0 * snapshot.get("dominant_macro_ratio_mean", 0.0)
         - 0.01 * snapshot["governance_variance"],
         3,
     )

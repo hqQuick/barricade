@@ -133,7 +133,7 @@ def _build_task_from_text(name, text, focus=None):
             focus = "planning"
 
     if focus == "patching":
-        req = ["PLAN", "REPAIR", "VERIFY", "COMMIT"]
+        req = ["PLAN", "REPAIR", "VERIFY_CODE", "COMMIT"]
         needs = {"patch": 2}
         tool_noise = (
             0.08
@@ -144,17 +144,23 @@ def _build_task_from_text(name, text, focus=None):
         )
         hazard = False
     elif focus == "summarizing":
-        req = ["OBSERVE", "RETRIEVE", "VERIFY", "SUMMARIZE"]
+        req = ["OBSERVE", "RETRIEVE", "VERIFY_DATA", "SUMMARIZE"]
         needs = {"summary": 2}
         tool_noise = 0.14
         hazard = True
     elif focus == "recovery":
-        req = ["SWITCH_CONTEXT", "VERIFY", "ROLLBACK", "REPAIR", "SUMMARIZE"]
+        req = [
+            "SWITCH_CONTEXT",
+            "VERIFY_CONSTRAINTS",
+            "ROLLBACK",
+            "REPAIR",
+            "SUMMARIZE",
+        ]
         needs = {"plan": 1, "patch": 1}
         tool_noise = 0.11
         hazard = True
     else:
-        req = ["PLAN", "REPAIR", "VERIFY", "COMMIT"]
+        req = ["PLAN", "REPAIR", "VERIFY_CONSTRAINTS", "COMMIT"]
         needs = {"plan": 2}
         tool_noise = 0.09
         hazard = False
@@ -170,6 +176,20 @@ def _build_task_from_text(name, text, focus=None):
         needs["plan"] = max(needs.get("plan", 0), 1)
     if _has_keyword(text, ("verify", "validation", "timeout", "rpc")):
         hazard = True
+    if _has_keyword(text, ("json", "schema", "output", "data")):
+        req = ["VERIFY_DATA" if token == "VERIFY" else token for token in req]
+    if focus == "recovery" and _has_keyword(
+        text, ("invariant", "constraint", "must remain", "must preserve")
+    ):
+        req = ["VERIFY_CONSTRAINTS" if token == "VERIFY" else token for token in req]
+    if _has_keyword(
+        text, ("code", "patch", "implement", "refactor", "class", "function")
+    ):
+        req = ["VERIFY_CODE" if token == "VERIFY" else token for token in req]
+    if focus == "recovery" and _has_keyword(
+        text, ("env", "runtime", "dependency", "workspace")
+    ):
+        req = ["VERIFY_ENV" if token == "VERIFY" else token for token in req]
 
     return {
         "name": name,

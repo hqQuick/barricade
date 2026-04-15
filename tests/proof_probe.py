@@ -68,6 +68,34 @@ def _execute(session: dict, state_dir: Path) -> dict:
         f = mcp_server.manage_execution(sid, "complete")
         status = f.get("completion_summary", {}).get("status")
         market = f.get("market", market)
+        if f.get("completion_summary"):
+            # Count completion evidence as part of the final market snapshot.
+            market = market + [
+                {
+                    "artifact_id": f"{sid}_COMPLETE_SUMMARY",
+                    "token": "WRITE_SUMMARY",
+                    "kind": "summary",
+                    "creator": "probe",
+                    "epoch": steps + 1,
+                    "price": 0.0,
+                    "score": 0.0,
+                    "status": "submitted",
+                    "content": json.dumps(f["completion_summary"], sort_keys=True),
+                },
+                {
+                    "artifact_id": f"{sid}_COMPLETE_LEARNING",
+                    "token": "COMMIT",
+                    "kind": "memory",
+                    "creator": "probe",
+                    "epoch": steps + 2,
+                    "price": 0.0,
+                    "score": 0.0,
+                    "status": "submitted",
+                    "content": json.dumps(
+                        f.get("execution_learning", {}), sort_keys=True
+                    ),
+                },
+            ]
 
     return {"status": status, "steps": steps, "market": market}
 

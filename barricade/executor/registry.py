@@ -32,7 +32,7 @@ from ._scoring import (
     _artifact_kind,
 )
 from ..feed_derived_dna.analysis import (
-    flatten_trace,
+    count_non_overlapping_subseq,
     mine_macros_from_elites,
     motif_key,
 )
@@ -46,6 +46,7 @@ from ..feed_derived_dna.persistence import (
     save_run_summary,
 )
 from .._shared import as_mapping, as_string_list, as_macro_library
+from .._shared import is_unresolved_macro_token
 from .._shared import run_command_with_timeout
 from .._validation import validate_workspace_root
 from ..dispatch import verification_passed as dispatch_verification_passed
@@ -82,13 +83,13 @@ class ExecutionSession:
     context: dict[str, Any] = field(default_factory=dict)
     state_root: Path | None = None
     workspace_root: Path | None = None
-    execution_traces: list[list[str]] = field(default_factory=list)
     current_execution_trace: list[str] = field(default_factory=list, repr=False)
     current_execution_trace_successful: bool = field(default=False, repr=False)
     patch_updates: dict[str, str] = field(default_factory=dict)
     verification_command: str | list[str] | None = None
     verification_spec: dict[str, Any] = field(default_factory=dict)
     verification_result: dict[str, Any] = field(default_factory=dict)
+    verification_failures: int = 0
     completed: bool = False
 
     def current_token(self) -> str | None:
@@ -118,14 +119,41 @@ class ExecutionSession:
         return [_market_entry_summary(artifact) for artifact in entries]
 
     def record_execution_trace_artifact(self, artifact: Artifact) -> None:
-        if artifact.token == "VERIFY" and artifact.status == "failed":
+        if (
+            artifact.token
+            in {
+                "VERIFY",
+                "VERIFY_CODE",
+                "VERIFY_DATA",
+                "VERIFY_CONSTRAINTS",
+                "VERIFY_ENV",
+            }
+            and artifact.status == "failed"
+        ):
             self.current_execution_trace.clear()
             self.current_execution_trace_successful = False
             return
 
         self.current_execution_trace.append(artifact.token)
-        if artifact.token == "VERIFY" and artifact.status == "passed":
+        if (
+            artifact.token
+            in {
+                "VERIFY",
+                "VERIFY_CODE",
+                "VERIFY_DATA",
+                "VERIFY_CONSTRAINTS",
+                "VERIFY_ENV",
+            }
+            and artifact.status == "passed"
+        ):
             self.current_execution_trace_successful = True
+
+    def record_verification_failure(self) -> int:
+        self.verification_failures += 1
+        return self.verification_failures
+
+    def reset_verification_failures(self) -> None:
+        self.verification_failures = 0
 
     def successful_execution_traces_snapshot(self) -> list[list[str]]:
         if self.current_execution_trace and self.current_execution_trace_successful:
@@ -151,6 +179,49 @@ def _mine_macros_for_session(
     return mine_macros_from_elites(execution_traces_for_mining, max_macros=8)
 
 
+def _macro_tokens(macro_entry: Any) -> list[str]:
+    if isinstance(macro_entry, dict):
+        return [str(token) for token in macro_entry.get("tokens", []) if str(token)]
+    if isinstance(macro_entry, list):
+        return [str(token) for token in macro_entry if str(token)]
+    return []
+
+
+def _macro_trust(macro_entry: Any) -> float:
+    if isinstance(macro_entry, dict):
+        try:
+            return float(macro_entry.get("trust", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+    return 0.0
+
+
+def _macro_reuse_count(macro_entry: Any) -> int:
+    if isinstance(macro_entry, dict):
+        try:
+            return int(macro_entry.get("reuse_count", 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+    return 0
+
+
+def _macro_decay(macro_entry: Any) -> int:
+    if isinstance(macro_entry, dict):
+        try:
+            return int(macro_entry.get("decay", 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+    return 0
+
+
+def _dedupe_preserve_order(tokens: list[str]) -> list[str]:
+    deduped: list[str] = []
+    for token in tokens:
+        if token not in deduped:
+            deduped.append(token)
+    return deduped
+
+
 def _resolve_execution_dna(result: dict[str, Any]) -> tuple[list[str], list[str]]:
     synthesis = as_mapping(result.get("synthesis"))
     if not synthesis:
@@ -158,6 +229,9 @@ def _resolve_execution_dna(result: dict[str, Any]) -> tuple[list[str], list[str]
 
     execution_seed = as_mapping(result.get("execution_seed"))
     candidate_dna = as_string_list(execution_seed.get("dna"))
+    if candidate_dna:
+        return candidate_dna, as_string_list(execution_seed.get("omitted_macros"))
+    learned_macros = as_macro_library(synthesis.get("learned_macros"))
     if not candidate_dna:
         candidate_dna = as_string_list(
             as_mapping(result.get("dna")).get("feed_prior_dna")
@@ -167,11 +241,8 @@ def _resolve_execution_dna(result: dict[str, Any]) -> tuple[list[str], list[str]
     if not candidate_dna:
         raise ValueError("solve_problem output must include synthesis.feed_prior_dna")
 
-    learned_macros = as_macro_library(synthesis.get("learned_macros"))
-
     execution_dna: list[str] = []
     omitted_macros = as_string_list(execution_seed.get("omitted_macros"))
-    from .._shared import is_unresolved_macro_token
 
     for token in candidate_dna:
         if is_unresolved_macro_token(token, learned_macros):
@@ -184,6 +255,24 @@ def _resolve_execution_dna(result: dict[str, Any]) -> tuple[list[str], list[str]
         raise ValueError("execution seed does not contain actionable tokens")
 
     return execution_dna, omitted_macros
+
+
+def _expand_lazy_macro_frontier(
+    dna: list[str],
+    macro_lib: dict[str, Any],
+    max_depth: int = 1,
+) -> list[str]:
+    expanded: list[str] = []
+    for token in dna:
+        entry = macro_lib.get(token)
+        tokens = _macro_tokens(entry)
+        trust = _macro_trust(entry)
+        decay = _macro_decay(entry)
+        if tokens and trust >= 0.55 and decay < 3 and max_depth > 0:
+            expanded.extend(tokens[: max(2, min(len(tokens), 4))])
+        else:
+            expanded.append(token)
+    return expanded
 
 
 def _completion_summary(
@@ -201,7 +290,16 @@ def _completion_summary(
     )
     artifact_status_counts = Counter(artifact.status for artifact in artifacts)
     verification_artifacts = [
-        artifact for artifact in artifacts if artifact.token == "VERIFY"
+        artifact
+        for artifact in artifacts
+        if artifact.token
+        in {
+            "VERIFY",
+            "VERIFY_CODE",
+            "VERIFY_DATA",
+            "VERIFY_CONSTRAINTS",
+            "VERIFY_ENV",
+        }
     ]
     verification_pass_count = sum(
         1 for artifact in verification_artifacts if artifact.status == "passed"
@@ -251,17 +349,24 @@ class ExecutionRegistry:
     def _load_macro_library(
         self,
         state_root: Path | None,
-        learned_macros: dict[str, list[str]] | None = None,
-    ) -> dict[str, list[str]]:
-        macro_lib = dict(BASE_MACROS)
+        learned_macros: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        macro_lib: dict[str, Any] = dict(BASE_MACROS)
         if state_root is not None:
             macro_lib.update(load_macro_library(state_root))
         if learned_macros:
             macro_lib.update(
                 {
-                    str(name): [str(token) for token in sequence]
+                    str(name): {
+                        "tokens": [str(token) for token in sequence]
+                        if isinstance(sequence, list)
+                        else _macro_tokens(sequence),
+                        "trust": 0.55,
+                        "reuse_count": 1,
+                        "decay": 0,
+                    }
                     for name, sequence in learned_macros.items()
-                    if isinstance(sequence, list)
+                    if isinstance(sequence, (list, dict))
                 }
             )
         return macro_lib
@@ -280,6 +385,12 @@ class ExecutionRegistry:
         artifact_id_hint: str | None = None,
     ) -> dict[str, Any]:
         current_token = token or session.current_token()
+        if current_token in session.macro_lib:
+            macro_entry: Any = session.macro_lib.get(current_token, {})
+            macro_tokens = _macro_tokens(macro_entry)
+            if macro_tokens and _macro_trust(macro_entry) >= 0.55:
+                session.context.setdefault("macro_frontier", []).append(current_token)
+                current_token = macro_tokens[0]
         if current_token is None:
             return {
                 "tool_hint": "complete_execution",
@@ -301,6 +412,15 @@ class ExecutionRegistry:
 
         if current_token == "VERIFY":
             instruction += " Return a pass/fail result from the verification command."
+        elif current_token in {
+            "VERIFY_CODE",
+            "VERIFY_DATA",
+            "VERIFY_CONSTRAINTS",
+            "VERIFY_ENV",
+        }:
+            instruction += " Return a pass/fail result for this verification mode."
+        elif current_token == "REANCHOR":
+            instruction += " Rebuild the trajectory from verified truth and trusted artifacts only."
 
         return {
             "tool_hint": guidance.get("tool_hint", "submit_step"),
@@ -338,15 +458,34 @@ class ExecutionRegistry:
             epoch=session.current_step + 1,
             price=price,
             score=round(score, 3),
-            status="submitted"
-            if token != "VERIFY"
-            else (
-                "passed" if verification and verification.get("passed") else "failed"
+            status=(
+                "passed"
+                if token
+                in {
+                    "VERIFY",
+                    "VERIFY_CODE",
+                    "VERIFY_DATA",
+                    "VERIFY_CONSTRAINTS",
+                    "VERIFY_ENV",
+                }
+                and verification
+                and verification.get("passed")
+                else (
+                    "failed"
+                    if token
+                    in {
+                        "VERIFY",
+                        "VERIFY_CODE",
+                        "VERIFY_DATA",
+                        "VERIFY_CONSTRAINTS",
+                        "VERIFY_ENV",
+                    }
+                    else "submitted"
+                )
             ),
             metadata=_jsonable(metadata),
         )
         session.market[artifact_id] = artifact
-        session.execution_traces.append(metadata["trace"])
         session.record_execution_trace_artifact(artifact)
         session.context["last_artifact_id"] = artifact_id
         session.context["last_token"] = token
@@ -364,7 +503,7 @@ class ExecutionRegistry:
             session.context["observations"] = content
         elif token in {"PLAN", "WRITE_PLAN"}:
             session.context["plan"] = content
-        elif token in {"WRITE_PATCH", "REPAIR", "ROLLBACK"}:
+        elif token in {"WRITE_PATCH", "REPAIR", "ROLLBACK", "REANCHOR"}:
             session.context.setdefault("patches", []).append(
                 {"artifact_id": artifact_id, "content": content}
             )
@@ -381,9 +520,20 @@ class ExecutionRegistry:
                     artifact.metadata["verification_spec"] = verification_spec
                     session.context["verification_spec"] = verification_spec
                     session.context["verification_target_artifact_id"] = artifact_id
+            if token == "REANCHOR":
+                session.context["reanchor"] = {
+                    "artifact_id": artifact_id,
+                    "content": content,
+                }
         elif token == "SUMMARIZE":
             session.context["summary"] = content
-        elif token == "VERIFY":
+        elif token in {
+            "VERIFY",
+            "VERIFY_CODE",
+            "VERIFY_DATA",
+            "VERIFY_CONSTRAINTS",
+            "VERIFY_ENV",
+        }:
             session.context["verification"] = verification or {}
             if verification and isinstance(verification.get("spec"), dict):
                 session.context["verification_spec"] = verification["spec"]
@@ -395,6 +545,12 @@ class ExecutionRegistry:
         elif token == "READ_ARTIFACT":
             session.context["artifact_read"] = content
         return artifact
+
+    def _macro_support(self, session: ExecutionSession, macro: list[str]) -> int:
+        return sum(
+            count_non_overlapping_subseq(trace, macro)
+            for trace in session.successful_execution_traces_snapshot()
+        )
 
     def _load_session(self, session_id: str) -> ExecutionSession:
         session = self._sessions.get(session_id)
@@ -436,7 +592,7 @@ class ExecutionRegistry:
         macro_lib = self._load_macro_library(state_root, learned_macros)
 
         dna, omitted_macros = _resolve_execution_dna(result)
-        flattened = flatten_trace(dna, macro_lib)
+        flattened = list(dna)
         execution_workspace_root = workspace_root
         session_id = f"exec_{uuid.uuid4().hex[:12]}"
         session = ExecutionSession(
@@ -504,7 +660,13 @@ class ExecutionRegistry:
             current_token = session.current_token()
             if current_token is None:
                 raise ValueError("execution session is already complete")
-            if current_token == "VERIFY":
+            if current_token in {
+                "VERIFY",
+                "VERIFY_CODE",
+                "VERIFY_DATA",
+                "VERIFY_CONSTRAINTS",
+                "VERIFY_ENV",
+            }:
                 raise ValueError(
                     "current step is VERIFY; call verify_step(session_id, command) instead"
                 )
@@ -514,6 +676,11 @@ class ExecutionRegistry:
                 )
 
             artifact = self._register_artifact(session, current_token, content)
+            if current_token == "REANCHOR":
+                self._reanchor_session(session)
+                session.advance_to(session.current_step)
+            elif current_token in session.macro_lib:
+                session.context.setdefault("macro_frontier", []).append(current_token)
             session.advance_to(session.current_step + 1)
             next_token = session.current_token()
             session.revision += 1
@@ -603,8 +770,14 @@ class ExecutionRegistry:
             session = self._load_session(session_id)
             self._ensure_session_active(session)
             current_token = session.current_token()
-            if current_token != "VERIFY":
-                raise ValueError("current step is not VERIFY")
+            if current_token not in {
+                "VERIFY",
+                "VERIFY_CODE",
+                "VERIFY_DATA",
+                "VERIFY_CONSTRAINTS",
+                "VERIFY_ENV",
+            }:
+                raise ValueError("current step is not a verification token")
 
             fallback_spec = as_mapping(session.context.get("verification_spec"))
             try:
@@ -636,6 +809,16 @@ class ExecutionRegistry:
                     )
             if verification_spec:
                 session.context["verification_spec"] = verification_spec
+            if current_token == "VERIFY_CONSTRAINTS":
+                verification_spec.setdefault("verification_mode", "constraints")
+            elif current_token == "VERIFY_CODE":
+                verification_spec.setdefault("verification_mode", "code")
+            elif current_token == "VERIFY_DATA":
+                verification_spec.setdefault("verification_mode", "data")
+            elif current_token == "VERIFY_ENV":
+                verification_spec.setdefault("verification_mode", "env")
+            else:
+                verification_spec.setdefault("verification_mode", "general")
             run_cwd = (
                 session.workspace_root
                 if session.workspace_root and session.workspace_root.exists()
@@ -689,13 +872,21 @@ class ExecutionRegistry:
             session.verification_result = verification
 
             if verification["passed"]:
+                session.reset_verification_failures()
                 session.advance_to(session.current_step + 1)
             else:
+                failure_count = session.record_verification_failure()
                 next_recovery = None
                 for index in range(session.current_step + 1, len(session.flattened)):
-                    if session.flattened[index] in {"REPAIR", "ROLLBACK"}:
+                    if session.flattened[index] in {
+                        "REPAIR",
+                        "ROLLBACK",
+                        "REANCHOR",
+                    }:
                         next_recovery = index
                         break
+                if failure_count >= 2 and "REANCHOR" in session.remaining_tokens():
+                    next_recovery = session.next_index_for("REANCHOR")
                 if next_recovery is not None:
                     session.advance_to(next_recovery)
             session.revision += 1
@@ -715,10 +906,20 @@ class ExecutionRegistry:
                     f"Summary: {structured_report.summary}\n"
                     f"Actionable hints:\n{hint_text}"
                 )
-            elif not verification["passed"] and next_token == "VERIFY":
+            elif not verification["passed"] and next_token == "REANCHOR":
                 next_instruction["instruction"] = (
-                    "Verification failed and the DNA does not contain REPAIR or ROLLBACK. "
-                    "The session remains on VERIFY until the plan is updated."
+                    "Verification failed repeatedly. REANCHOR to verified truth using IR and trusted artifacts only."
+                )
+            elif not verification["passed"] and next_token in {
+                "VERIFY",
+                "VERIFY_CODE",
+                "VERIFY_DATA",
+                "VERIFY_CONSTRAINTS",
+                "VERIFY_ENV",
+            }:
+                next_instruction["instruction"] = (
+                    f"{current_token} failed and the DNA does not contain REPAIR or ROLLBACK. "
+                    "The session remains on this step until the plan is updated."
                 )
 
             payload = _session_payload(
@@ -740,6 +941,132 @@ class ExecutionRegistry:
             payload["next_instruction"] = next_instruction
             payload["dna_summary"] = _dna_summary(session.flattened)
             return payload
+
+    def _reanchor_session(self, session: ExecutionSession) -> None:
+        verified_tokens = {
+            "VERIFY",
+            "VERIFY_CODE",
+            "VERIFY_DATA",
+            "VERIFY_CONSTRAINTS",
+            "VERIFY_ENV",
+        }
+
+        def _ir_text(problem_ir: dict[str, Any]) -> str:
+            parts: list[str] = []
+            for key in ("kind", "goal", "normalized_text", "raw_text"):
+                value = problem_ir.get(key)
+                if value:
+                    parts.append(str(value))
+            for key in ("constraints", "invariants", "deliverables", "risks"):
+                value = problem_ir.get(key, [])
+                if isinstance(value, list):
+                    parts.extend(str(item) for item in value if item)
+            return " ".join(parts).lower()
+
+        def _choose_recovery_suffix(problem_ir: dict[str, Any]) -> list[str]:
+            ir_text = _ir_text(problem_ir)
+            kind = str(problem_ir.get("kind", "") or "").lower()
+            suffix = ["REANCHOR"]
+            verification_spec = as_mapping(session.context.get("verification_spec"))
+            verification_mode = str(
+                verification_spec.get("verification_mode", "") or ""
+            ).lower()
+            failure_signatures = {
+                str(token).upper()
+                for token in session.context.get("verification", {}).get(
+                    "failure_signatures", []
+                )
+                if token
+            }
+            invariants = [
+                str(item).lower() for item in problem_ir.get("invariants", []) if item
+            ]
+            if kind == "recovery" or any(
+                token in ir_text
+                for token in ("rollback", "recover", "failure", "retry")
+            ):
+                suffix.extend(["ROLLBACK", "REPAIR", "VERIFY_CONSTRAINTS", "VERIFY"])
+            elif verification_mode == "code" or "VERIFY_CODE" in failure_signatures:
+                suffix.extend(["REPAIR", "VERIFY_CODE", "VERIFY"])
+            elif verification_mode == "data" or "VERIFY_DATA" in failure_signatures:
+                suffix.extend(["REPAIR", "VERIFY_DATA", "VERIFY"])
+            elif verification_mode == "env" or "VERIFY_ENV" in failure_signatures:
+                suffix.extend(["VERIFY_ENV", "VERIFY"])
+            elif any(
+                token in ir_text for token in ("code", "patch", "implement", "refactor")
+            ):
+                suffix.extend(["REPAIR", "VERIFY_CODE", "VERIFY"])
+            elif any(
+                token in ir_text for token in ("data", "schema", "json", "output")
+            ):
+                suffix.extend(["REPAIR", "VERIFY_DATA", "VERIFY"])
+            elif any(
+                token in ir_text
+                for token in ("env", "runtime", "dependency", "workspace")
+            ):
+                suffix.extend(["VERIFY_ENV", "VERIFY"])
+            elif any(
+                token in ir_text for token in ("constraint", "invariant", "truth")
+            ):
+                suffix.extend(["VERIFY_CONSTRAINTS", "VERIFY"])
+            else:
+                suffix.extend(["VERIFY_CONSTRAINTS", "VERIFY"])
+
+            if any("schema" in item or "json" in item for item in invariants):
+                suffix = ["REANCHOR", "VERIFY_DATA", "VERIFY"]
+            elif any("env" in item or "runtime" in item for item in invariants):
+                suffix = ["REANCHOR", "VERIFY_ENV", "VERIFY"]
+            elif any(
+                "constraint" in item or "invariant" in item for item in invariants
+            ):
+                suffix = ["REANCHOR", "VERIFY_CONSTRAINTS", "VERIFY"]
+            elif any("code" in item or "patch" in item for item in invariants):
+                suffix = ["REANCHOR", "VERIFY_CODE", "VERIFY"]
+
+            if "COMMIT" in session.flattened[session.current_step + 1 :]:
+                suffix.append("COMMIT")
+            elif "SUMMARIZE" in session.flattened[session.current_step + 1 :]:
+                suffix.append("SUMMARIZE")
+            return _dedupe_preserve_order(suffix)
+
+        last_passed_idx = -1
+        for i, token in enumerate(session.flattened[: session.current_step]):
+            if token in verified_tokens:
+                epoch = i + 1
+                passed = any(
+                    a.status == "passed"
+                    for a in session.market.values()
+                    if a.epoch == epoch and a.token == token
+                )
+                if passed:
+                    last_passed_idx = i
+                else:
+                    break
+
+        if last_passed_idx != -1:
+            trusted_prefix = session.flattened[: last_passed_idx + 1]
+        else:
+            trusted_prefix = []
+            for token in session.flattened[: session.current_step]:
+                if token in verified_tokens:
+                    break
+                trusted_prefix.append(token)
+
+        if not trusted_prefix:
+            trusted_prefix = ["OBSERVE", "PLAN"]
+        session.context["reanchor_trusted_prefix"] = list(trusted_prefix)
+        session.context["reanchor_source"] = {
+            "problem_ir": session.context.get("intake", {}).get("problem_ir", {}),
+            "verification_result": _jsonable(session.verification_result),
+        }
+        problem_ir = as_mapping(session.context.get("intake", {}).get("problem_ir", {}))
+        if not isinstance(problem_ir, dict):
+            problem_ir = {}
+        recovery_suffix = _choose_recovery_suffix(problem_ir)
+        session.flattened = list(trusted_prefix) + recovery_suffix
+        session.advance_to(len(trusted_prefix))
+        session.context["reanchor_rewritten"] = True
+        session.reset_verification_failures()
 
     def complete_execution(self, session_id: str) -> dict[str, Any]:
         with self._lock:
@@ -785,6 +1112,21 @@ class ExecutionRegistry:
                         : min(3, len(successful_execution_traces[0]))
                     ],
                 }
+
+            macro_support = {
+                name: self._macro_support(session, sequence)
+                for name, sequence in learned_macros.items()
+            }
+            retained_macros = {
+                name: sequence
+                for name, sequence in learned_macros.items()
+                if macro_support.get(name, 0) >= 2
+            }
+            decayed_macros = {
+                name: sequence
+                for name, sequence in learned_macros.items()
+                if name not in retained_macros
+            }
 
             session.revision += 1
 
@@ -837,12 +1179,12 @@ class ExecutionRegistry:
 
             if session.state_root is not None:
                 combined_macros = dict(session.macro_lib)
-                combined_macros.update(learned_macros)
+                combined_macros.update(retained_macros or learned_macros)
                 completion_summary = _completion_summary(
                     session,
                     artifacts,
                     dispatch_updates,
-                    learned_macros,
+                    retained_macros or learned_macros,
                     successful_execution_traces,
                 )
                 save_discoverables(
@@ -853,6 +1195,35 @@ class ExecutionRegistry:
                         "session_id": session.session_id,
                         "task_text": session.task_text,
                         "dna_summary": _dna_summary(session.flattened),
+                        "macro_trust": {
+                            name: round(
+                                min(
+                                    1.0,
+                                    0.45
+                                    + 0.15 * len(sequence)
+                                    + 0.05 * macro_support.get(name, 0),
+                                ),
+                                3,
+                            )
+                            for name, sequence in (
+                                retained_macros or learned_macros
+                            ).items()
+                        },
+                        "macro_reuse_count": {
+                            name: int(macro_support.get(name, 0))
+                            for name in (retained_macros or learned_macros)
+                        },
+                        "macro_decay": {
+                            name: 0 if macro_support.get(name, 0) >= 2 else 1
+                            for name in (retained_macros or learned_macros)
+                        },
+                        "macro_evidence": {
+                            name: {
+                                "support": macro_support.get(name, 0),
+                                "trace_count": len(successful_execution_traces),
+                            }
+                            for name in (retained_macros or learned_macros)
+                        },
                     },
                 )
                 save_run_summary(
@@ -865,6 +1236,14 @@ class ExecutionRegistry:
                         ),
                         "feed_prior_dna": session.dna,
                         "learned_macros": learned_macros,
+                        "retained_macros": retained_macros,
+                        "macro_decay": {
+                            name: {
+                                "support": macro_support.get(name, 0),
+                                "decay": 1,
+                            }
+                            for name in decayed_macros
+                        },
                         "controller_summary": session.context.get("synthesis", {}).get(
                             "summary", {}
                         ),
@@ -916,6 +1295,8 @@ class ExecutionRegistry:
                         "execution_learning": {
                             "successful_trace_count": len(successful_execution_traces),
                             "learned_macro_count": len(learned_macros),
+                            "retained_macro_count": len(retained_macros),
+                            "decayed_macro_count": len(decayed_macros),
                         },
                         "artifact_count": len(artifacts),
                         "market_count": len(session.market),
@@ -974,11 +1355,41 @@ class ExecutionRegistry:
         payload["completed"] = True
         payload["dispatch_plan"] = _jsonable(dispatch_plan)
         payload["learned_macros"] = learned_macros
+        payload["retained_macros"] = retained_macros
+        payload["macro_decay"] = {
+            name: {
+                "support": macro_support.get(name, 0),
+                "decay": 1,
+            }
+            for name in decayed_macros
+        }
+        payload["macro_trust"] = {
+            name: round(
+                min(
+                    1.0, 0.45 + 0.15 * len(sequence) + 0.05 * macro_support.get(name, 0)
+                ),
+                3,
+            )
+            for name, sequence in (retained_macros or learned_macros).items()
+        }
+        payload["macro_reuse_count"] = {
+            name: int(macro_support.get(name, 0))
+            for name in (retained_macros or learned_macros)
+        }
+        payload["macro_evidence"] = {
+            name: {
+                "support": macro_support.get(name, 0),
+                "trace_count": len(successful_execution_traces),
+            }
+            for name in (retained_macros or learned_macros)
+        }
         payload["completion_summary"] = _jsonable(completion_summary)
         payload["market"] = session.market_snapshot()
         payload["execution_learning"] = {
             "successful_trace_count": len(successful_execution_traces),
             "learned_macro_count": len(learned_macros),
+            "retained_macro_count": len(retained_macros),
+            "decayed_macro_count": len(decayed_macros),
         }
         payload["market_count"] = len(session.market)
         payload["verification_result"] = _jsonable(session.verification_result)

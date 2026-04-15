@@ -331,6 +331,7 @@ class ProblemIR:
     domain_tags: list[str] = field(default_factory=_empty_str_list)
     entities: list[str] = field(default_factory=_empty_str_list)
     constraints: list[str] = field(default_factory=_empty_str_list)
+    invariants: list[str] = field(default_factory=_empty_str_list)
     deliverables: list[str] = field(default_factory=_empty_str_list)
     risks: list[str] = field(default_factory=_empty_str_list)
     relations: list[dict[str, Any]] = field(default_factory=_empty_relation_list)
@@ -590,6 +591,7 @@ def _build_nodes_and_edges(
     goal: str,
     entities: list[str],
     constraints: list[str],
+    invariants: list[str],
     deliverables: list[str],
     risks: list[str],
     domain_tags: list[str],
@@ -611,6 +613,13 @@ def _build_nodes_and_edges(
             {"id": node_id, "kind": "constraint", "label": constraint, "weight": 0.9}
         )
         edges.append({"source": "goal", "target": node_id, "kind": "bounded_by"})
+
+    for index, invariant in enumerate(invariants):
+        node_id = f"invariant:{index}"
+        nodes.append(
+            {"id": node_id, "kind": "invariant", "label": invariant, "weight": 0.95}
+        )
+        edges.append({"source": "goal", "target": node_id, "kind": "must_hold"})
 
     for index, deliverable in enumerate(deliverables):
         node_id = f"deliverable:{index}"
@@ -653,6 +662,7 @@ def build_problem_ir(
     *,
     goal: str,
     constraints: list[str],
+    invariants: list[str] | None = None,
     deliverables: list[str],
     risks: list[str],
     domain_tags: list[str],
@@ -670,12 +680,16 @@ def build_problem_ir(
         relation_kinds=relation_kinds,
     )
     entities = extract_entities(raw_text, domain_tags=domain_tags, goal_kind=goal_kind)
+    invariants = _dedupe_preserve_order(
+        [str(item) for item in (invariants or []) if item]
+    )
     canonical_tokens = _dedupe_preserve_order(
         [
             *sorted(f"domain:{tag}" for tag in domain_tags if tag),
             *sorted(f"entity:{entity}" for entity in entities),
             *sorted(f"relation:{relation}" for relation in relation_kinds),
             *sorted(_canonical_constraint_tokens(constraints)),
+            *sorted(f"invariant:{item}" for item in invariants),
             *sorted(_canonical_deliverable_tokens(deliverables)),
             *sorted(_canonical_risk_tokens(risks)),
             *sorted(_canonical_goal_tokens(goal_kind, goal)),
@@ -686,6 +700,7 @@ def build_problem_ir(
         goal=goal,
         entities=entities,
         constraints=constraints,
+        invariants=invariants,
         deliverables=deliverables,
         risks=risks,
         domain_tags=domain_tags,
@@ -717,6 +732,7 @@ def build_problem_ir(
             domain_tags=[tag for tag in domain_tags if tag],
             entities=entities,
             constraints=constraints,
+            invariants=invariants,
             deliverables=deliverables,
             risks=risks,
             relations=[
@@ -800,12 +816,14 @@ def _stable_bucket(value: str, buckets: int = 4) -> int:
 def _problem_ir_support(problem_ir: Mapping[str, Any]) -> int:
     entities = problem_ir.get("entities", [])
     constraints = problem_ir.get("constraints", [])
+    invariants = problem_ir.get("invariants", [])
     deliverables = problem_ir.get("deliverables", [])
     risks = problem_ir.get("risks", [])
     relation_kinds = _relation_kind_list(problem_ir)
     return (
         len(entities)
         + len(constraints)
+        + len(invariants)
         + len(deliverables)
         + len(risks)
         + len(relation_kinds)
@@ -838,6 +856,9 @@ def semantic_probe_profile(problem_ir: Mapping[str, Any]) -> dict[str, Any]:
         for constraint in problem_ir.get("constraints", [])
         if constraint
     ]
+    invariants = [
+        str(invariant) for invariant in problem_ir.get("invariants", []) if invariant
+    ]
     deliverables = [
         str(deliverable)
         for deliverable in problem_ir.get("deliverables", [])
@@ -852,6 +873,10 @@ def semantic_probe_profile(problem_ir: Mapping[str, Any]) -> dict[str, Any]:
     if constraints:
         probe_checks.extend(
             f"check constraint: {constraint}" for constraint in constraints
+        )
+    if invariants:
+        probe_checks.extend(
+            f"check invariant: {invariant}" for invariant in invariants[:4]
         )
     if entities:
         probe_checks.append(f"check entity coverage: {', '.join(entities[:4])}")

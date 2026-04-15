@@ -29,6 +29,24 @@ def _summarize_macro(name: str, sequence: list[str]) -> dict[str, Any]:
     }
 
 
+def _summarize_macro_from_payload(
+    name: str, sequence: Any, metadata: dict[str, Any]
+) -> dict[str, Any] | None:
+    if isinstance(sequence, dict):
+        tokens = sequence.get("tokens", [])
+    else:
+        tokens = sequence
+    if not isinstance(tokens, list):
+        return None
+
+    summary = _summarize_macro(name, [str(token) for token in tokens])
+    if metadata:
+        summary["trust"] = round(float(metadata.get("trust", 0.0) or 0.0), 3)
+        summary["reuse_count"] = int(metadata.get("reuse_count", 0) or 0)
+        summary["decay"] = int(metadata.get("decay", 0) or 0)
+    return summary
+
+
 def _summarize_motif(name: str, meta: dict[str, Any]) -> dict[str, Any]:
     return {
         "motif": name,
@@ -42,13 +60,21 @@ def _summarize_motif(name: str, meta: dict[str, Any]) -> dict[str, Any]:
 
 def _summarize_run(entry: dict[str, Any]) -> dict[str, Any]:
     summary = entry.get("summary", {})
+    learned_macros = entry.get("learned_macros", {})
+    if isinstance(learned_macros, dict):
+        macro_names = list(learned_macros.keys())
+    elif isinstance(learned_macros, list):
+        macro_names = [str(item) for item in learned_macros]
+    else:
+        macro_names = []
     return {
         "status": summary.get("status", "unknown"),
         "artifacts": summary.get("artifact_count", 0),
         "patches": summary.get("patch_update_count", summary.get("patch_updates", 0)),
         "verified": summary.get("verification_passed", False),
         "dna": entry.get("feed_prior_dna", [])[:5],
-        "macros_learned": list(entry.get("learned_macros", {}).keys()),
+        "macros_learned": macro_names[:8],
+        "macro_count": len(macro_names),
     }
 
 
@@ -144,11 +170,33 @@ def inspect_state(
     macros_raw = (
         macro_data.get("macros", macro_data) if isinstance(macro_data, dict) else {}
     )
-    macros = [
-        _summarize_macro(name, seq)
-        for name, seq in list(macros_raw.items())[:max_macros]
-        if isinstance(seq, list)
-    ]
+    macro_metadata = (
+        macro_data.get("metadata", {}) if isinstance(macro_data, dict) else {}
+    )
+    macro_trust = (
+        macro_metadata.get("trust", {}) if isinstance(macro_metadata, dict) else {}
+    )
+    macro_reuse_count = (
+        macro_metadata.get("reuse_count", {})
+        if isinstance(macro_metadata, dict)
+        else {}
+    )
+    macro_decay = (
+        macro_metadata.get("decay", {}) if isinstance(macro_metadata, dict) else {}
+    )
+    macros = []
+    for name, seq in list(macros_raw.items())[:max_macros]:
+        summary = _summarize_macro_from_payload(
+            name,
+            seq,
+            {
+                "trust": macro_trust.get(name, 0.0),
+                "reuse_count": macro_reuse_count.get(name, 0),
+                "decay": macro_decay.get(name, 0),
+            },
+        )
+        if summary is not None:
+            macros.append(summary)
 
     motif_data = _read_json(discoverables / MOTIF_CACHE_FILE)
     motifs_raw = (
@@ -193,6 +241,10 @@ def inspect_state(
     frequent_motifs = sorted(motifs, key=lambda m: m["occurrences"], reverse=True)[:5]
     recent_failures = [r for r in run_summaries if not r["verified"]][-3:]
 
+    macros = macros[:max_macros]
+    motifs = motifs[:max_motifs]
+    run_summaries = run_summaries[-max_runs:]
+
     actionable_context: list[str] = []
     if macros:
         actionable_context.append(
@@ -219,7 +271,7 @@ def inspect_state(
             "available": True,
             "state_root": str(root),
             "summary": {
-                "macro_count": len(macros),
+                "macro_count": len(macros_raw),
                 "motif_count": len(motifs),
                 "total_runs": len(run_summaries),
                 "lineage_entries": lineage_count,

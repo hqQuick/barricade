@@ -45,6 +45,8 @@ BENCHMARK_RUN_LOG_FILE = "benchmark_runs.jsonl"
 TASK_SHAPE_PRIOR_LOG_FILE = "task_shape_priors.jsonl"
 OUTCOME_LEDGER_FILE = "outcome_ledger.jsonl"
 EXECUTION_FEEDBACK_FILE = "execution_feedback.jsonl"
+MAX_RETENTION_ENTRIES = 250
+MAX_RETENTION_BENCHMARKS = 100
 
 
 def resolve_state_root(state_dir: str | Path | None):
@@ -90,6 +92,14 @@ def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(_jsonable(payload), sort_keys=True))
         handle.write("\n")
+
+
+def _rewrite_jsonl(path: Path, entries: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for entry in entries:
+            handle.write(json.dumps(_jsonable(entry), sort_keys=True))
+            handle.write("\n")
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -364,64 +374,6 @@ def save_forbidden_subsequence_memory(
     )
 
 
-def save_benchmark_run(
-    state_root,
-    signature: str,
-    result: dict[str, Any],
-    metadata: dict[str, Any] | None = None,
-    reused: bool = False,
-):
-    if state_root is None:
-        return
-
-    result_path = benchmark_run_path(state_root, signature)
-    record = {
-        "signature": signature,
-        "metadata": metadata or {},
-        "result": result,
-    }
-    _write_json(result_path, record)
-
-    log_payload = {
-        "kind": "benchmark",
-        "signature": signature,
-        "result_path": str(result_path),
-        "reused": reused,
-        "metadata": metadata or {},
-        "summary": result.get("summary", {}),
-        "prototype_summary": result.get("prototype_summary", {}),
-        "selection_report": result.get("selection_report", {}),
-        "rotation_analysis": result.get("rotation_analysis", {}),
-        "parallax_telemetry": result.get("parallax_telemetry", {}),
-        "forbidden_subsequence_memory": result.get("forbidden_subsequence_memory", {}),
-        "best_governed": result.get("best_governed", {}),
-        "best_raw": result.get("best_raw", {}),
-        "controller_summary": result.get("controller_summary", {}),
-        "phase_summary": result.get("phase_summary", {}),
-        "task_pool": result.get("task_pool", []),
-        "feed_prior_dna": result.get("feed_prior_dna", []),
-        "learned_macros": result.get("learned_macros", {}),
-        "task_shape_signature": result.get("task_shape_signature", ""),
-        "outcome_score": result.get("outcome_record", {}).get("outcome_score", 0.0),
-        "outcome_class": result.get("outcome_record", {}).get("outcome_class", ""),
-    }
-    _append_jsonl(state_root / BENCHMARK_RUN_LOG_FILE, log_payload)
-
-
-def save_outcome_ledger(state_root, record: dict[str, Any]):
-    if state_root is None:
-        return
-
-    _append_jsonl(state_root / OUTCOME_LEDGER_FILE, record)
-
-
-def save_execution_feedback(state_root, record: dict[str, Any]):
-    if state_root is None:
-        return
-
-    _append_jsonl(state_root / EXECUTION_FEEDBACK_FILE, record)
-
-
 def load_task_shape_priors(state_root):
     if state_root is None:
         return []
@@ -457,8 +409,36 @@ def load_macro_library(state_root):
 
     loaded = {}
     for name, sequence in macros.items():
-        if isinstance(sequence, list):
-            loaded[str(name)] = [str(token) for token in sequence]
+        if isinstance(sequence, dict):
+            tokens = [str(token) for token in sequence.get("tokens", [])]
+            trust = float(sequence.get("trust", 0.0) or 0.0)
+            reuse_count = int(sequence.get("reuse_count", 0) or 0)
+            decay = int(sequence.get("decay", 0) or 0)
+            if trust < 0.45 or decay >= 3:
+                continue
+            if reuse_count < 2:
+                continue
+        elif isinstance(sequence, list):
+            tokens = [str(token) for token in sequence]
+            trust = 0.0
+            reuse_count = 0
+            decay = 0
+        else:
+            continue
+        if len(tokens) < 2 or len(tokens) > 6:
+            continue
+        if all(token.startswith("LM") for token in tokens):
+            if len(set(tokens)) <= 1:
+                continue
+            if len(tokens) > 4:
+                continue
+        if (
+            tokens[0].startswith("LM")
+            and tokens[-1].startswith("LM")
+            and len(set(tokens)) <= 2
+        ):
+            continue
+        loaded[str(name)] = tokens
     return loaded
 
 
@@ -491,22 +471,48 @@ def save_discoverables(state_root, learned_macros, motif_archive, metadata=None)
         return
 
     discoverables_dir = state_root / DISCOVERABLES_DIR
+    filtered_macros = {}
+    for name, sequence in learned_macros.items():
+        tokens = sequence.get("tokens", []) if isinstance(sequence, dict) else sequence
+        if not isinstance(tokens, list):
+            continue
+        normalized_tokens = [str(token) for token in tokens]
+        if not (2 <= len(normalized_tokens) <= 6):
+            continue
+        if (
+            normalized_tokens[0].startswith("LM")
+            and normalized_tokens[-1].startswith("LM")
+            and len(set(normalized_tokens)) <= 2
+        ):
+            continue
+        filtered_macros[str(name)] = normalized_tokens
+    macro_metadata = {
+        "trust": (metadata or {}).get("macro_trust", {}),
+        "reuse_count": (metadata or {}).get("macro_reuse_count", {}),
+        "decay": (metadata or {}).get("macro_decay", {}),
+        "evidence": (metadata or {}).get("macro_evidence", {}),
+    }
     cached_motifs = dict(motif_archive)
-    if not cached_motifs and learned_macros:
-        cached_motifs = {
-            name: {
-                "count": 1,
-                "mean_governed": 0.0,
-                "mean_profit": 0.0,
-                "mean_stability": 0.0,
-                "best_governed_fitness": 0.0,
-                "specializations": {},
-            }
-            for name in learned_macros
-        }
+    if not cached_motifs:
+        for name, sequence in filtered_macros.items():
+            tokens = sequence
+            motif_name = "|".join(tokens[:3]) if len(tokens) >= 3 else "|".join(tokens)
+            if not motif_name:
+                continue
+            cached_motifs.setdefault(
+                motif_name,
+                {
+                    "count": 1,
+                    "mean_governed": 0.0,
+                    "mean_profit": 0.0,
+                    "mean_stability": 0.0,
+                    "best_governed_fitness": 0.0,
+                    "specializations": {},
+                },
+            )
     macro_payload = {
-        "macros": learned_macros,
-        "metadata": metadata or {},
+        "macros": filtered_macros,
+        "metadata": macro_metadata,
     }
     motif_payload = {
         "motifs": cached_motifs,
@@ -514,6 +520,52 @@ def save_discoverables(state_root, learned_macros, motif_archive, metadata=None)
     }
     _write_json(discoverables_dir / MACRO_LIBRARY_FILE, macro_payload)
     _write_json(discoverables_dir / MOTIF_CACHE_FILE, motif_payload)
+
+
+def _retention_slice(entries: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    if len(entries) <= limit:
+        return entries
+    head = entries[-limit:]
+    return head
+
+
+def save_outcome_ledger(state_root, record, metadata=None):
+    if state_root is None:
+        return
+
+    payload = dict(record)
+    if metadata is not None:
+        payload.setdefault("metadata", metadata)
+    path = state_root / OUTCOME_LEDGER_FILE
+    entries = _read_jsonl(path)
+    entries.append(payload)
+    _rewrite_jsonl(path, _retention_slice(entries, MAX_RETENTION_ENTRIES))
+
+
+def save_execution_feedback(state_root, record, metadata=None):
+    if state_root is None:
+        return
+
+    payload = dict(record)
+    if metadata is not None:
+        payload.setdefault("metadata", metadata)
+    path = state_root / EXECUTION_FEEDBACK_FILE
+    entries = _read_jsonl(path)
+    entries.append(payload)
+    _rewrite_jsonl(path, _retention_slice(entries, MAX_RETENTION_ENTRIES))
+
+
+def save_run_summary(state_root, result, metadata=None):
+    if state_root is None:
+        return
+
+    payload = dict(result)
+    if metadata is not None:
+        payload.setdefault("metadata", metadata)
+    path = state_root / RUN_LOG_FILE
+    entries = _read_jsonl(path)
+    entries.append(payload)
+    _rewrite_jsonl(path, _retention_slice(entries, MAX_RETENTION_ENTRIES))
 
 
 def save_lineage_archive(state_root, label, individuals, metadata=None):
@@ -526,27 +578,28 @@ def save_lineage_archive(state_root, label, individuals, metadata=None):
         "metadata": metadata or {},
         "individuals": [serialize_individual(individual) for individual in individuals],
     }
-    _append_jsonl(state_root / LINEAGE_LOG_FILE, payload)
+    path = state_root / LINEAGE_LOG_FILE
+    entries = _read_jsonl(path)
+    entries.append(payload)
+    _rewrite_jsonl(path, _retention_slice(entries, MAX_RETENTION_ENTRIES))
 
 
-def save_run_summary(state_root, result, metadata=None):
+def save_benchmark_run(
+    state_root, signature, result, metadata=None, reused: bool = False
+):
     if state_root is None:
         return
 
-    payload = {
-        "metadata": metadata or {},
-        "summary": result.get("summary", {}),
-        "prototype_summary": result.get("prototype_summary", {}),
-        "selection_report": result.get("selection_report", {}),
-        "rotation_analysis": result.get("rotation_analysis", {}),
-        "parallax_telemetry": result.get("parallax_telemetry", {}),
-        "forbidden_subsequence_memory": result.get("forbidden_subsequence_memory", {}),
-        "best_governed": result.get("best_governed", {}),
-        "best_raw": result.get("best_raw", {}),
-        "controller_summary": result.get("controller_summary", {}),
-        "phase_summary": result.get("phase_summary", {}),
-        "task_pool": result.get("task_pool", []),
-        "feed_prior_dna": result.get("feed_prior_dna", []),
-        "learned_macros": result.get("learned_macros", {}),
-    }
-    _append_jsonl(state_root / RUN_LOG_FILE, payload)
+    payload = {"signature": signature, "result": result}
+    if metadata is not None:
+        payload["metadata"] = metadata
+    path = benchmark_run_path(state_root, signature)
+    _write_json(path, payload)
+    log_path = state_root / BENCHMARK_RUN_LOG_FILE
+    entries = _read_jsonl(log_path)
+    log_payload = dict(payload)
+    log_payload["kind"] = "benchmark"
+    log_payload["result_path"] = str(path)
+    log_payload["reused"] = reused
+    entries.append(log_payload)
+    _rewrite_jsonl(log_path, _retention_slice(entries, MAX_RETENTION_BENCHMARKS))

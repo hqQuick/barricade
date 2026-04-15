@@ -218,6 +218,8 @@ class WorkflowIntake:
     raw_task: str
     goal: str
     constraints: list[str] = field(default_factory=list)
+    invariants: list[str] = field(default_factory=list)
+    invariant_sources: list[str] = field(default_factory=list)
     deliverables: list[str] = field(default_factory=list)
     risks: list[str] = field(default_factory=list)
     expected_artifact_type: str = "plan"
@@ -283,6 +285,42 @@ def extract_constraints(text: str) -> list[str]:
             constraints.append(phrase[:180])
     seen: list[str] = []
     for item in constraints:
+        if item not in seen:
+            seen.append(item)
+    return seen[:6]
+
+
+def extract_invariants(text: str) -> list[str]:
+    lowered = text.lower()
+    invariants: list[str] = []
+    patterns = [
+        r"\binvariants?\b[^.\n!?]*",
+        r"\bmust remain\b[^.\n!?]*",
+        r"\bmust preserve\b[^.\n!?]*",
+        r"\bkeep\b[^.\n!?]*",
+        r"\bno\b[^.\n!?]*",
+        r"\bonly\b[^.\n!?]*",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, lowered)
+        if match:
+            phrase = re.sub(r"\s+", " ", match.group(0)).strip()
+            invariants.append(phrase[:180])
+
+    if not invariants:
+        for constraint in extract_constraints(text)[:4]:
+            cleaned = re.sub(
+                r"^(must|should|keep|preserve|avoid|only|no)\s+", "", constraint
+            )
+            cleaned = re.sub(r"\s+", " ", cleaned).strip()
+            if cleaned:
+                invariants.append(cleaned[:180])
+
+    if not invariants:
+        invariants.append("preserve stated constraints")
+
+    seen: list[str] = []
+    for item in invariants:
         if item not in seen:
             seen.append(item)
     return seen[:6]
@@ -831,6 +869,10 @@ def build_workflow_intake(
     )
     goal = choose_goal(problem_text)
     constraints = extract_constraints(problem_text)
+    invariants = extract_invariants(problem_text)
+    invariant_sources = [
+        f"constraint:{item}" for item in constraints[: len(invariants)]
+    ]
     deliverables = extract_deliverables(problem_text)
     risks = extract_risks(problem_text)
     domain_tags = extract_domain_tags(problem_text)
@@ -842,6 +884,7 @@ def build_workflow_intake(
         problem_text,
         goal=goal,
         constraints=constraints,
+        invariants=invariants,
         deliverables=deliverables,
         risks=risks,
         domain_tags=domain_tags,
@@ -853,6 +896,7 @@ def build_workflow_intake(
         raw_task=problem_text.strip(),
         goal=goal,
         constraints=constraints,
+        invariants=invariants,
         deliverables=deliverables,
         risks=risks,
         expected_artifact_type=expected_artifact_type,
@@ -866,6 +910,7 @@ def build_workflow_intake(
         counterexample_hints=list(problem_ir.get("counterexample_hints", [])),
         prototype_stage=str(problem_ir.get("prototype_stage", "candidate")),
         holdout_bucket=int(problem_ir.get("holdout_bucket", 0) or 0),
+        invariant_sources=invariant_sources,
         optimizer_frame=optimizer_frame,
     )
     frame.shape_lanes = _shape_lane_scores(frame, optimizer_frame)
@@ -924,6 +969,7 @@ def task_shape_profile(
     problem_ir = intake.get("problem_ir", {}) if isinstance(intake, dict) else {}
     profile["problem_ir_signature"] = str(intake.get("problem_ir_signature", ""))
     profile["problem_ir"] = problem_ir if isinstance(problem_ir, dict) else {}
+    profile["invariants"] = list(intake.get("invariants", []))
     profile["semantic_probes"] = dict(intake.get("semantic_probes", {}))
     profile["counterexample_hints"] = list(intake.get("counterexample_hints", []))
     profile["prototype_stage"] = str(intake.get("prototype_stage", "candidate"))
